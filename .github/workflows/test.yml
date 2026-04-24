@@ -1,0 +1,88 @@
+name: Test set_resolution.sh across macOS versions
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: macOS ${{ matrix.os }}
+    strategy:
+      fail-fast: false       # Run all versions even if one fails
+      matrix:
+        os: [macos-13, macos-14, macos-15]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+      # ── 1. Checkout your repo ──────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Print macOS version (useful in logs) ───────────────────────────
+      - name: Show macOS version
+        run: sw_vers
+
+      # ── 3. Syntax check (catches zsh parse errors instantly) ──────────────
+      - name: Syntax check
+        run: zsh -n set_resolution.sh && echo "✅ Syntax OK"
+
+      # ── 4. Static analysis with ShellCheck ───────────────────────────────
+      - name: Install ShellCheck
+        run: brew install shellcheck
+
+      - name: Run ShellCheck
+        run: |
+          # SC1071: zsh shebang, SC2296: zsh-specific syntax — both expected
+          shellcheck --shell=bash --exclude=SC1071,SC2296,SC2128 set_resolution.sh \
+            && echo "✅ ShellCheck passed" \
+            || echo "⚠️ ShellCheck warnings (review above)"
+
+      # ── 5. Verify core dependencies exist on this OS ──────────────────────
+      - name: Check dependencies
+        run: |
+          echo "Checking required commands..."
+          for cmd in curl awk grep zsh brew; do
+            if command -v "$cmd" &>/dev/null; then
+              echo "  ✅ $cmd → $(command -v $cmd)"
+            else
+              echo "  ❌ $cmd → NOT FOUND"
+              exit 1
+            fi
+          done
+
+      # ── 6. Check Homebrew paths are correct for this architecture ─────────
+      - name: Verify Homebrew path detection
+        run: |
+          ARCH=$(uname -m)
+          echo "Architecture: $ARCH"
+          if [[ "$ARCH" == "arm64" ]]; then
+            [[ -f /opt/homebrew/bin/brew ]] \
+              && echo "✅ Apple Silicon path: /opt/homebrew/bin/brew" \
+              || echo "❌ Apple Silicon path not found"
+          else
+            [[ -f /usr/local/bin/brew ]] \
+              && echo "✅ Intel path: /usr/local/bin/brew" \
+              || echo "❌ Intel path not found"
+          fi
+
+      # ── 7. Install displayplacer and verify it runs ───────────────────────
+      - name: Install displayplacer
+        run: |
+          brew tap jakehilborn/jakehilborn
+          brew install displayplacer
+          displayplacer --version && echo "✅ displayplacer installed"
+
+      # ── 8. Run displayplacer list and show raw output (headless = no display) ──
+      - name: Show displayplacer output (headless environment)
+        run: |
+          echo "--- displayplacer list output ---"
+          displayplacer list 2>&1 || true
+          echo "--- end ---"
+
+      # ── 9. Run the full script using the mock test harness ────────────────
+      - name: Run mock test suite
+        run: zsh tests/run_tests.sh
